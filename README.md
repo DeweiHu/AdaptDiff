@@ -1,7 +1,7 @@
 # Medical-Domain-Diffusion
 
 ### Environment
-The virtual environment is created by `diffusion.yaml` by running: 
+The virtual environment is created by `Diffusion.yaml` by running: 
 ```
-conda env create -f diffusion.yaml
+conda env create -f Diffusion.yaml
 ```
