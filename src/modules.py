@@ -56,127 +56,230 @@ class SPADE_residual_block(nn.Module):
         self.conv_2 = nn.Conv2d(hidden_nch, output_nch, kernel_size=3, padding=1)
         self.SPADE_norm_2 = SPADE(seg_nch, hidden_nch)
 
+        self.conv_3 = nn.Conv2d(input_nch, output_nch, kernel_size=3, padding=1)
+        self.SPADE_norm_3 = SPADE(seg_nch, input_nch)
+
         self.activate = nn.GELU()
 
 
     def forward(self, x, segmap):
-        dx = self.conv_1(self.activate(self.SPADE_norm_1(x, segmap)))
-        dx = self.conv_2(self.activate(self.SPADE_norm_2(dx, segmap)))
-        output = x + dx
+        main_x = self.conv_1(self.activate(self.SPADE_norm_1(x, segmap)))
+        main_x = self.conv_2(self.activate(self.SPADE_norm_2(main_x, segmap)))
+        side_x = self.conv_3(self.activate(self.SPADE_norm_3(x, segmap)))
+        output = main_x + side_x
         
         return output
 
 
 class residual_block(nn.Module):
 
-    def __init__(self, nch_in, nch_out):
-        super(residual_block,self).__init__()
-        self.align = nn.Conv2d(in_channels = nch_in,
-                               out_channels = nch_out,
-                               kernel_size = 1,
-                               stride = 1,
-                               padding = 0)
-        self.dualconv = nn.Sequential(
-                nn.Conv2d(in_channels = nch_out,
-                          out_channels = nch_out,
-                          kernel_size = 3,
-                          stride = 1,
-                          padding = 1),
-                nn.BatchNorm2d(num_features = nch_out),
-                nn.GELU(),
-                nn.Conv2d(in_channels = nch_out,
-                          out_channels = nch_out,
-                          kernel_size = 3,
-                          stride = 1,
-                          padding = 1),
-                nn.BatchNorm2d(num_features = nch_out)
-                )
-        self.gelu = nn.GELU()
+    def __init__(self, input_nch, output_nch):
+        super(residual_block, self).__init__()
+
+        hidden_nch = min(input_nch, output_nch)
+        
+        self.conv_1 = nn.Conv2d(input_nch, hidden_nch, kernel_size=3, padding=1)
+        self.norm_1 = nn.InstanceNorm2d(num_features=input_nch)
+        
+        self.conv_2 = nn.Conv2d(hidden_nch, output_nch, kernel_size=3, padding=1)
+        self.norm_2 = nn.InstanceNorm2d(num_features=hidden_nch)
+
+        self.conv_3 = nn.Conv2d(input_nch, output_nch, kernel_size=3, padding=1)
+        self.norm_3 = nn.InstanceNorm2d(num_features=input_nch)
+
+        self.activate = nn.GELU()
     
+
     def forward(self, x):
-        x = self.align(x)
-        x1 = self.dualconv(x)
-        opt = self.gelu(torch.add(x,x1))
-        return opt
+        main_x = self.conv_1(self.activate(self.norm_1(x)))
+        main_x = self.conv_2(self.activate(self.norm_2(main_x)))
+        side_x = self.conv_3(self.activate(self.norm_3(x)))
+        output = main_x + side_x
+
+        return output
     
-    
-def trans_down(nch_in, nch_out):
+
+def ConvBlock(input_nch, output_nch):
     return nn.Sequential(
-            nn.Conv2d(in_channels=nch_in, 
-                      out_channels=nch_out, 
-                      kernel_size=4,
-                      stride=2, 
+            nn.Conv2d(in_channels=input_nch,
+                      out_channels=output_nch,
+                      kernel_size=3,
+                      stride=1,
                       padding=1),
-            nn.BatchNorm2d(nch_out),
-            nn.GELU()
-            )
-            
-            
-def trans_up(nch_in,nch_out):
+            nn.InstanceNorm2d(output_nch),
+            nn.GELU(),
+    )
+
+def DownSample(input_nch, output_nch):
     return nn.Sequential(
-            nn.ConvTranspose2d(in_channels=nch_in, 
-                               out_channels=nch_out,
-                               kernel_size=4, 
-                               stride=2, 
+            nn.Conv2d(in_channels=input_nch,
+                      out_channels=output_nch,
+                      kernel_size=4,
+                      stride=2,
+                      padding=1),
+            nn.InstanceNorm2d(output_nch),
+            nn.GELU(),
+    )
+            
+
+def UpSample(input_nch, output_nch):
+    return nn.Sequential(
+            nn.ConvTranspose2d(in_channels=input_nch,
+                               out_channels=output_nch,
+                               kernel_size=4,
+                               stride=2,
                                padding=1),
-            nn.BatchNorm2d(nch_out),
-            nn.GELU()
-            )
+            nn.InstanceNorm2d(output_nch),
+            nn.GELU(),
+    )
 
 
-class res_UNet(nn.Module):
-    def __init__(self, nch_enc, nch_in, nch_out):
-        super(res_UNet,self).__init__()
+class SPADE_Generator(nn.Module):
+
+    def __init__(self, output_nch=3):
+        super(SPADE_Generator, self).__init__()
+
+        # hard code the hidden channels to be [16, 8, 4, 2], 
+        self.SPADE_block_0 = SPADE_residual_block(1, 1, 16)
+        self.upsample_0 = UpSample(16, 16)
+
+        self.SPADE_block_1 = SPADE_residual_block(1, 16, 8)
+        self.upsample_1 = UpSample(8, 8)
+
+        self.SPADE_block_2 = SPADE_residual_block(1, 8, 4)
+        self.upsample_2 = UpSample(4, 4)
+
+        self.SPADE_block_3 = SPADE_residual_block(1, 4, 2)
+        self.upsample_3 = UpSample(2, 2)
+
+        self.SPADE_block_4 = SPADE_residual_block(1, 2, output_nch)
+
+
+    def forward(self, x, y):
+        x = self.upsample_0(self.SPADE_block_0(x, y))
+        x = self.upsample_1(self.SPADE_block_1(x, y))
+        x = self.upsample_2(self.SPADE_block_2(x, y))
+        x = self.upsample_3(self.SPADE_block_3(x, y))
+        output = self.SPADE_block_4(x, y)
+        return output
+
+
+class ImageEncoder(nn.Module):
+
+    def __init__(self, input_nch, hidden_nchs, H, W):
+        super(ImageEncoder, self).__init__()
+
+        self.input_nch = input_nch
+        self.hidden_nchs = hidden_nchs
+
+        # get the feature size
+        c, h, w = self.get_feature_size(H, W)
+        feature_nch = c * h * w
         
-        # (assume input_channel=1)
-        self.nch_in = nch_in
-        self.nch_enc = nch_enc
-        self.nch_aug = (self.nch_in,)+self.nch_enc
-        
+        self.fc_mu = nn.Linear(feature_nch, 256)
+        self.fc_var = nn.Linear(feature_nch, 256)
+
+        self.activate = nn.GELU()
+
         # module list
-        self.encoder = nn.ModuleList()
-        self.decoder = nn.ModuleList()
-        self.td = nn.ModuleList()
-        self.tu = nn.ModuleList()
-        
-        for i in range(len(self.nch_enc)):
-            # encoder & downsample
-            self.encoder.append(residual_block(self.nch_aug[i], self.nch_aug[i+1]))
-            self.td.append(trans_down(self.nch_enc[i], self.nch_enc[i]))
-            # decoder & upsample
-            self.tu.append(trans_up(self.nch_enc[-1-i], self.nch_enc[-1-i]))
-            if i == len(self.nch_enc)-1:
-                self.decoder.append(residual_block(self.nch_aug[-1-i]*2, nch_out))
+        self.Conv = nn.ModuleList()
+        self.Dsample = nn.ModuleList()
+
+        for i in range(len(self.hidden_nchs)):
+            if i  == 0:
+                self.Conv.append(ConvBlock(input_nch, hidden_nchs[i]))
+                self.Dsample.append(DownSample(self.hidden_nchs[i], self.hidden_nchs[i]))
             else:
-                self.decoder.append(residual_block(self.nch_aug[-1-i]*2, self.nch_aug[-2-i]))
+                self.Conv.append(ConvBlock(hidden_nchs[i-1], hidden_nchs[i]))
+                self.Dsample.append(DownSample(self.hidden_nchs[i], self.hidden_nchs[i]))
+
+
+    def get_feature_size(self, H, W):
+        c = self.hidden_nchs[-1]
+        h = H // (2 ** (len(self.hidden_nchs)))
+        w = W // (2 ** (len(self.hidden_nchs)))
+        return c, h, w
+        
+
+    def forward(self, x):
+        for i in range(len(self.hidden_nchs)):
+            layer_output = self.Conv[i](x)
+            x = self.Dsample[i](layer_output)
+
+        x = x.view(x.size(0), -1)
+        mu = self.fc_mu(x)
+        logvar = self.fc_var(x)
+
+        return mu, logvar
+    
+
+class Discriminator(nn.Module):
+
+    def __init__(self, input_nch, hidden_nch=64):
+        super(Discriminator, self).__init__()
+
+        self.model = nn.Sequential(
+            # layer 1
+            nn.Conv2d(input_nch, hidden_nch, kernel_size=4, stride=2, padding=1),
+            nn.LeakyReLU(0.2, inplace=True),
+            
+            # layer 2
+            nn.Conv2d(hidden_nch, hidden_nch * 2, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(hidden_nch * 2),
+            nn.LeakyReLU(0.2, inplace=True),
+
+            # layer 3
+            nn.Conv2d(hidden_nch * 2, hidden_nch * 4, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(hidden_nch * 4),
+            nn.LeakyReLU(0.2, inplace=True),
+
+            # layer 4
+            nn.Conv2d(hidden_nch * 4, hidden_nch * 8, kernel_size=4, stride=1, padding=1),
+            nn.BatchNorm2d(hidden_nch * 8),
+            nn.LeakyReLU(0.2, inplace=True),
+
+            # final layer
+            nn.Conv2d(hidden_nch * 8, 1, kernel_size=4, stride=1, padding=1)
+        )
     
     
     def forward(self, x):
-        cats = []
-        # encoder
-        for i in range(len(self.nch_enc)):
-            layer_opt = self.encoder[i](x)
-            x = self.td[i](layer_opt)
-            cats.append(layer_opt)
-        
-        # bottom layer
-        layer_opt = x
-        
-        # decoder
-        for i in range(len(self.nch_enc)):
-            x = self.tu[i](layer_opt)
-            x = torch.cat([x,cats[-1-i]],dim=1)
-            layer_opt = self.decoder[i](x)
-
-        y_pred = layer_opt
-        return y_pred
+        return self.model(x)
 
 
 if __name__ == "__main__":
     
-    segmap = torch.rand([1, 3, 512, 512])
-    feature_map = torch.rand([64, 64])
+    device = torch.device("cuda")
 
-    ds = F.interpolate(segmap, size=feature_map.size(), mode='nearest')
-    print(ds.size())
+    # initiate a model
+    encoder_nchs = [4, 8, 16, 32, 64]
+    encoder = ImageEncoder(input_nch=3, 
+                           hidden_nchs=encoder_nchs,
+                           H=256,
+                           W=256).to(device)
+    
+    generator = SPADE_Generator().to(device)
+    discriminator = Discriminator(4).to(device)
+    
+    # dimension checker
+    x = torch.rand((8, 3, 256, 256), dtype=torch.float32).to(device)
+    y = torch.rand((8, 1, 256, 256), dtype=torch.float32).to(device)
+    mu, logvar = encoder(x)
 
+    # reparameterization
+    std = torch.exp(0.5 * logvar)
+    eps = torch.randn_like(std)
+    z = mu + eps * std
+    z = z.view(z.size(0), 1, 16, 16)
+
+    # SPADE Generator
+    fake = generator(z, y)
+
+    # Patch discriminator
+    fake_concat = torch.cat([fake, y], dim=1)
+    real_concat = torch.cat([x, y], dim=1)
+    fake_and_real = torch.cat([fake_concat, real_concat], dim=0)
+
+    discriminator_output = discriminator(fake_and_real)
+
+    print(f"{discriminator_output.shape}")
