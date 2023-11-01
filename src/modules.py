@@ -213,6 +213,33 @@ class ImageEncoder(nn.Module):
         return mu, logvar
     
 
+class Semantic_Generator(nn.Module):
+
+    def __init__(self, input_nch, encoder_nchs, H, W):
+        super(Semantic_Generator, self).__init__()
+
+        self.style_encoder = ImageEncoder(input_nch=input_nch,
+                                          hidden_nchs=encoder_nchs,
+                                          H=H,
+                                          W=W)
+        self.generator = SPADE_Generator()
+
+
+    def forward(self, x, y):
+        mu, logvar = self.style_encoder(x)
+        z = self.reparameterize(mu, logvar)
+        fake_im = self.generator(z, y)
+        return fake_im
+
+
+    def reparameterize(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        z = mu + eps * std
+        z = z.view(z.size(0), 1, 16, 16)
+        return z
+
+
 class Discriminator(nn.Module):
 
     def __init__(self, input_nch, hidden_nch=64):
@@ -245,6 +272,8 @@ class Discriminator(nn.Module):
     
     def forward(self, x):
         return self.model(x)
+
+
 
 
 if __name__ == "__main__":
