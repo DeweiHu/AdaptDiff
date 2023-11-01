@@ -35,13 +35,22 @@ class pair:
             if len(im.shape) == 3:
                 opt = utils.ImageRescale(np.float32(im), [0, 1])
                 opt = np.transpose(opt, (2, 0, 1))
-            else:
+                
+                # remove transparancy channels if exists
+                opt = opt[:3, :, :]
+
+            elif len(im.shape) == 2:
                 opt = utils.ImageRescale(np.float32(im), [0, 1])
                 opt = np.stack([opt] * 3, axis=0)
-        
+            else:
+                raise ValueError
+
         elif im_type == "gt":
             # remove other labels (e.g. fovea)
             opt = np.uint8(im == im.max())
+
+            if len(opt.shape) != 2:
+                opt = opt[:, :, 0]
             
         # elif im_type == "mask":
         #     opt = np.uint8(im == im.max())
