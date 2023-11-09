@@ -17,26 +17,26 @@ def get_beta_schedule(beta_schedule, *, beta_start, beta_end, num_diffusion_time
                 beta_start ** 0.5,
                 beta_end ** 0.5,
                 num_diffusion_timesteps,
-                dtype=np.float64,
+                dtype=np.float32,
             )
             ** 2
         )
 
     elif beta_schedule == "linear":
         betas = np.linspace(
-            beta_start, beta_end, num_diffusion_timesteps, dtype=np.float64
+            beta_start, beta_end, num_diffusion_timesteps, dtype=np.float32
         )
 
     elif beta_schedule == "const":
-        betas = beta_end * np.ones(num_diffusion_timesteps, dtype=np.float64)
+        betas = beta_end * np.ones(num_diffusion_timesteps, dtype=np.float32)
 
     elif beta_schedule == "jsd":  # 1/T, 1/(T-1), 1/(T-2), ..., 1
         betas = 1.0 / np.linspace(
-            num_diffusion_timesteps, 1, num_diffusion_timesteps, dtype=np.float64
+            num_diffusion_timesteps, 1, num_diffusion_timesteps, dtype=np.float32
         )
 
     elif beta_schedule == "sigmoid":
-        betas = np.linspace(-6, 6, num_diffusion_timesteps)
+        betas = np.linspace(-6, 6, num_diffusion_timesteps, dtype=np.float32)
         betas = sigmoid(betas) * (beta_end - beta_start) + beta_start
     
     else:
@@ -87,7 +87,7 @@ class DiffusionSampler:
         output: [batch_size, 1, 1, 1]
         '''
         batch_size = t.shape[0]
-        output = vals.gather(-1, t.cpu())
+        output = vals.gather(-1, t.type(torch.int64))
         output = output.reshape(batch_size, *((1,) * (len(x_shape) - 1)))
         return output
 
@@ -227,6 +227,24 @@ class DiffusionDecoder(nn.Module):
         return output
 
 
+class DiffusionModel(nn.Module):
+
+    def __init__(self, input_nch, encoder_nchs, p_size, t_embed_dim):
+        super(DiffusionModel, self).__init__()
+
+        self.encoder = DiffusionEncoder(input_nch=input_nch, 
+                            hidden_nchs=encoder_nchs,
+                            H=p_size[0],
+                            W=p_size[1],
+                            t_embed_dim=t_embed_dim)
+        self.decoder = DiffusionDecoder(t_embed_dim=t_embed_dim)
+    
+    
+    def forward(self, x, y, t):
+        z = self.encoder(x, t)
+        output = self.decoder(z, y, t)
+        return output
+
 
 if __name__ == "__main__":
 
@@ -245,31 +263,27 @@ if __name__ == "__main__":
     betas = get_beta_schedule(beta_schedule="sigmoid",
                               beta_start=beta_start,
                               beta_end=beta_end,
-                              num_diffusion_timesteps=num_timesteps)
+                              num_diffusion_timesteps=num_timesteps).to(device)
 
     # load model
     encoder_nchs = [4, 8, 16, 32, 64]
     p_size = [256, 256]
-    encoder = DiffusionEncoder(input_nch=3, 
-                            hidden_nchs=encoder_nchs,
-                            H=p_size[0],
-                            W=p_size[1],
-                            t_embed_dim=t_embed_dim).to(device)
-    decoder = DiffusionDecoder(t_embed_dim=t_embed_dim).to(device)
-
+    model = DiffusionModel(input_nch=3, 
+                           encoder_nchs=encoder_nchs, 
+                           p_size=p_size, 
+                           t_embed_dim=t_embed_dim).to(device)
 
     # simulation
     x = torch.randn((batch_size, 3, p_size[0], p_size[1]), dtype=torch.float32).to(device)
     y = torch.randn((batch_size, 1, p_size[0], p_size[1]), dtype=torch.float32).to(device)
     t = torch.randint(0, T, (batch_size,), device=device).long()
     
-    # style encoding
-    z = encoder(x, t)
+    sampler = DiffusionSampler(betas, device=device)
+    x_t, eps = sampler.forward_sample(x, t)
 
-    # semantic decoding
-    output = decoder(z, y, t)
+    output = model(x_t, y, t)
 
-    print(f"x: {x.shape}, t: {t.shape}, z: {z.shape}, output: {output.shape}")
+    print(f"x_t: {x_t.dtype}, y: {y.dtype}, t: {t.dtype}, betas: {betas.dtype}")
 
 
     
