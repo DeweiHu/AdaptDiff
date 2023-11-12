@@ -6,6 +6,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import modules
 
+import utils
+
 
 def get_beta_schedule(beta_schedule, *, beta_start, beta_end, num_diffusion_timesteps):
     def sigmoid(x):
@@ -48,12 +50,13 @@ def get_beta_schedule(beta_schedule, *, beta_start, beta_end, num_diffusion_time
 
 class DiffusionSampler:
 
-    def __init__(self, betas, device="cpu"):
+    def __init__(self, betas, device):
         super(DiffusionSampler, self).__init__()
 
         self.device = device
         
         # given the beta schedule, compute the close-form expressions 
+        self.betas = betas
         self.alphas = 1. - betas
         self.sqrt_reciprocal_alphas = torch.sqrt(1.0 / self.alphas)
 
@@ -67,18 +70,76 @@ class DiffusionSampler:
         self.posterior_variance = betas * (1. - self.alphas_cumprod_prev) / (1. - self.alphas_cumprod)
         
 
+    # set the forward sample done on cpu by default
     def forward_sample(self, x_0, t):
-        eps = torch.randn_like(x_0).to(self.device)
+        eps = torch.randn_like(x_0)
         sqrt_alphas_cumprod_t = self.get_index_from_list(vals=self.sqrt_alphas_cumprod, 
                                                          t=t, 
-                                                         x_shape=x_0.shape).to(self.device)
+                                                         x_shape=x_0.shape)
         sqrt_one_minus_alphas_cumprod_t = self.get_index_from_list(vals=self.sqrt_one_minus_alphas_cumprod,
                                                                    t=t,
-                                                                   x_shape=x_0.shape).to(self.device)
-        x_t = sqrt_alphas_cumprod_t * x_0.to(self.device) + sqrt_one_minus_alphas_cumprod_t * eps
+                                                                   x_shape=x_0.shape)
+        x_t = sqrt_alphas_cumprod_t * x_0 + sqrt_one_minus_alphas_cumprod_t * eps
         return x_t, eps
 
+
+    @torch.no_grad()
+    def reverse_sample(self, x_t, t, model):
+        
+        betas_t = self.get_index_from_list(self.betas, t, x_t.shape)
+        
+        sqrt_one_minus_alphas_cumprod_t = self.get_index_from_list(
+            self.sqrt_one_minus_alphas_cumprod, t, x_t.shape
+        )
+        
+        sqrt_reciprocal_alphas_t = self.get_index_from_list(
+            self.sqrt_reciprocal_alphas, t, x_t.shape
+        )
+        
+        posterior_variance_t = self.get_index_from_list(
+            self.posterior_variance, t, x_t.shape
+        )
+
+        eps_pred = model(x_t.to(self.device), t.to(self.device)).cpu()
+        
+        mean = sqrt_reciprocal_alphas_t * (x_t - betas_t * eps_pred / sqrt_one_minus_alphas_cumprod_t)
+        noise = torch.randn_like(x_t)
+
+        return mean + torch.sqrt(posterior_variance_t) * noise
+
+
+    @torch.no_grad()
+    def reverse_iterate(self, x_t, t, model):
+        # iterative reverse sampling
+        for i in range(0, t+1):
+            t_tensor = torch.full((1, ), t-i, dtype=torch.long)
+            x_t = self.reverse_sample(x_t, t_tensor, model)
+            x_t = torch.clamp(x_t, -1.0, 1.0)
+
+        return x_t
     
+
+    @torch.no_grad()
+    def grid_plot(self, x_t, model, save_path):
+        num_plot = 10
+        T = len(self.betas)
+        stepsize = int(T / num_plot)
+
+        fig, axes = plt.subplots(2, 5, figsize=(15, 6))
+        for t in range(0, T, stepsize):
+            x_0 =self.reverse_iterate(x_t, t, model)
+
+            r = int(t / stepsize) // 5
+            c = int(t / stepsize) % 5
+            ax = axes[r, c]
+            ax.imshow(utils.tensor2pil(x_0.detach().cpu()))
+            ax.set_title(f"denoise step = {t}")
+            ax.axis("off")
+        
+        plt.tight_layout()
+        plt.savefig(save_path)
+
+
     def get_index_from_list(self, vals, t, x_shape):
         '''
           vals: [num_timestep]
@@ -87,7 +148,7 @@ class DiffusionSampler:
         output: [batch_size, 1, 1, 1]
         '''
         batch_size = t.shape[0]
-        output = vals.gather(-1, t.type(torch.int64))
+        output = vals.gather(-1, t.type(torch.int64).cpu())
         output = output.reshape(batch_size, *((1,) * (len(x_shape) - 1)))
         return output
 
