@@ -6,6 +6,8 @@ import cv2
 from skimage.filters import threshold_multiotsu
 from pynvml import *
 import nibabel as nib
+from torchvision import transforms
+
 
 def print_gpu_utilization(stemp, visible_devices):
     nvmlInit()
@@ -58,8 +60,14 @@ def write_depth(path, depth, bits=1, absolute_depth=False):
     return
 
 def _to_image_(tensor):
-    img = tensor.detach().cpu().permute(0, 2, 3, 1).numpy()
-    img = (img * 255).round().astype('uint8')
+    if len(tensor.shape) == 3:
+        img = tensor.detach().cpu().permute(1, 2, 0).numpy()
+    elif len(tensor.shape) == 2:
+        img = tensor.detach().cpu().numpy()
+    else:
+        raise ValueError
+
+    img = (ImageRescale(img, [0,255])).astype('uint8')
     return img
 
 def ImageRescale(im, I_range):
@@ -96,3 +104,22 @@ def nii_loader(dir):
 def nii_saver(volume,path,filename,header=None):
     output = nib.Nifti1Image(volume, np.eye(4), header=header)
     nib.save(output,os.path.join(path,filename))
+
+
+def tensor2pil(image):
+    reverse_transforms = transforms.Compose([
+        transforms.Lambda(lambda t: (t + 1) / 2),
+        transforms.Lambda(lambda t: t.permute(1, 2, 0)), # CHW to HWC
+        transforms.Lambda(lambda t: t * 255.),
+        transforms.Lambda(lambda t: t.numpy().astype(np.uint8)),
+        transforms.ToPILImage(),
+    ])
+
+    # Take first image of batch
+    if len(image.shape) == 4:
+        b, c, h, w = image.shape
+        image = image[0, :, :, :]
+        if c == 1:
+            image = torch.cat((image, image, image), dim=0)
+        
+    return reverse_transforms(image)
