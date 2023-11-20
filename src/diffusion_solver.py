@@ -84,7 +84,7 @@ class DiffusionSampler:
 
 
     @torch.no_grad()
-    def reverse_sample(self, x_t, t, model):
+    def reverse_sample(self, x_t, y, t, model):
         
         betas_t = self.get_index_from_list(self.betas, t, x_t.shape)
         
@@ -100,7 +100,7 @@ class DiffusionSampler:
             self.posterior_variance, t, x_t.shape
         )
 
-        eps_pred = model(x_t.to(self.device), t.to(self.device)).cpu()
+        eps_pred = model(x_t.to(self.device), y.to(self.device), t.to(self.device)).cpu()
         
         mean = sqrt_reciprocal_alphas_t * (x_t - betas_t * eps_pred / sqrt_one_minus_alphas_cumprod_t)
         noise = torch.randn_like(x_t)
@@ -109,35 +109,67 @@ class DiffusionSampler:
 
 
     @torch.no_grad()
-    def reverse_iterate(self, x_t, t, model):
+    def reverse_iterate(self, x_t, y, t, model):
         # iterative reverse sampling
         for i in range(0, t+1):
             t_tensor = torch.full((1, ), t-i, dtype=torch.long)
-            x_t = self.reverse_sample(x_t, t_tensor, model)
+            x_t = self.reverse_sample(x_t, y, t_tensor, model)
             x_t = torch.clamp(x_t, -1.0, 1.0)
 
         return x_t
     
 
     @torch.no_grad()
-    def grid_plot(self, x_t, model, save_path):
+    def serial_reverse_iterate(self, x_t, y, T, model, num_images, save_path):
+        
+        step_size = int(T / num_images)
+
+        for i in range(0, T)[::-1]:
+            t_tensor = torch.full((1, ), i, dtype=torch.long)
+            x_t = self.reverse_sample(x_t, y, t_tensor, model)
+            x_t = torch.clamp(x_t, -1.0, 1.0)
+
+            if i % step_size == 0:
+                img = utils.tensor2pil(x_t.detach().cpu())
+                utils.image_saver(np.array(img), save_path, f"step_{i}")
+            
+
+    @torch.no_grad()
+    def grid_plot(self, x_t, y, model, save_path):
         num_plot = 10
         T = len(self.betas)
         stepsize = int(T / num_plot)
 
         fig, axes = plt.subplots(2, 5, figsize=(15, 6))
-        for t in range(0, T, stepsize):
-            x_0 =self.reverse_iterate(x_t, t, model)
+        for i in range(0, T)[::-1]:
+            t_tensor = torch.full((1, ), i, dtype=torch.long)
+            x_t = self.reverse_sample(x_t, y, t_tensor, model)
+            x_t = torch.clamp(x_t, -1.0, 1.0)
 
-            r = int(t / stepsize) // 5
-            c = int(t / stepsize) % 5
-            ax = axes[r, c]
-            ax.imshow(utils.tensor2pil(x_0.detach().cpu()))
-            ax.set_title(f"denoise step = {t}")
-            ax.axis("off")
+            if i % stepsize == 0:
+                r = int(i / stepsize) // 5
+                c = int(i / stepsize) % 5
+                ax = axes[r, c]
+                ax.imshow(utils.tensor2pil(x_t.detach().cpu()))
+                ax.set_title(f"denoise step = {i}")
+                ax.axis("off")
         
         plt.tight_layout()
         plt.savefig(save_path)
+    
+
+    @torch.no_grad()
+    def get_conditonal_diffusion_result(self, x_t, y, model):
+        T = len(self.betas)
+        x_0 = self.reverse_iterate(x_t, y, T-1, model)
+        x_0 = np.array(utils.tensor2pil(x_0.detach().cpu()))
+        
+        y = y.detach().numpy()
+        y = np.uint8(utils.ImageRescale(y, [0, 255]))
+
+        img = np.hstack((x_0[:, :, 0], y[0, 0, :, :]))
+        return img
+        
 
 
     def get_index_from_list(self, vals, t, x_shape):
@@ -237,11 +269,11 @@ class DiffusionEncoder(nn.Module):
 
 class DiffusionDecoder(nn.Module):
 
-    def __init__(self, t_embed_dim, output_nch=3):
+    def __init__(self, t_embed_dim, output_nch=1):
         super(DiffusionDecoder, self).__init__()
         
-        # hard code the hidden channels to be [16, 8, 4, 2]
-        self.hidden_nchs = [1, 16, 8, 4, 2]
+        # hard code the hidden channels to be [64, 32, 16, 8]
+        self.hidden_nchs = [1, 64, 32, 16, 8]
 
         self.activate = nn.GELU()
 
