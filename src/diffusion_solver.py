@@ -50,10 +50,11 @@ def get_beta_schedule(beta_schedule, *, beta_start, beta_end, num_diffusion_time
 
 class DiffusionSampler:
 
-    def __init__(self, betas, device):
+    def __init__(self, betas, device, mode='unconditional'):
         super(DiffusionSampler, self).__init__()
 
         self.device = device
+        self.mode = mode
         
         # given the beta schedule, compute the close-form expressions 
         self.betas = betas
@@ -84,7 +85,7 @@ class DiffusionSampler:
 
 
     @torch.no_grad()
-    def reverse_sample(self, x_t, y, t, model):
+    def reverse_sample(self, x_t, t, model, x_condition=None):
         
         betas_t = self.get_index_from_list(self.betas, t, x_t.shape)
         
@@ -100,8 +101,13 @@ class DiffusionSampler:
             self.posterior_variance, t, x_t.shape
         )
 
-        eps_pred = model(x_t.to(self.device), y.to(self.device), t.to(self.device)).cpu()
-        
+        if self.mode == 'conditional':
+            eps_pred = model(x_t.to(self.device), x_condition.to(self.device), t.to(self.device)).cpu()
+        elif self.mode == 'unconditional':
+            eps_pred = model(x_t.to(self.device), t.to(self.device)).cpu()
+        else:
+            raise ValueError
+
         mean = sqrt_reciprocal_alphas_t * (x_t - betas_t * eps_pred / sqrt_one_minus_alphas_cumprod_t)
         noise = torch.randn_like(x_t)
 
@@ -109,24 +115,36 @@ class DiffusionSampler:
 
 
     @torch.no_grad()
-    def reverse_iterate(self, x_t, y, t, model):
+    def reverse_iterate(self, x_t, t, model, x_condition=None):
         # iterative reverse sampling
         for i in range(0, t+1):
             t_tensor = torch.full((1, ), t-i, dtype=torch.long)
-            x_t = self.reverse_sample(x_t, y, t_tensor, model)
+            
+            if self.mode == 'conditional':
+                x_t = self.reverse_sample(x_t, t_tensor, model, x_condition)
+            elif self.mode == 'unconditional':
+                x_t = self.reverse_sample(x_t, t_tensor, model)
+            else:
+                raise ValueError
+
             x_t = torch.clamp(x_t, -1.0, 1.0)
 
         return x_t
     
 
     @torch.no_grad()
-    def serial_reverse_iterate(self, x_t, y, T, model, num_images, save_path):
+    def serial_reverse_iterate(self, x_t, T, model, num_images, save_path, x_condition=None):
         
         step_size = int(T / num_images)
 
         for i in range(0, T)[::-1]:
             t_tensor = torch.full((1, ), i, dtype=torch.long)
-            x_t = self.reverse_sample(x_t, y, t_tensor, model)
+            if self.mode == 'conditional':
+                x_t = self.reverse_sample(x_t, t_tensor, model, x_condition)
+            elif self.mode == 'unconditional':
+                x_t = self.reverse_sample(x_t, t_tensor, model)
+            else:
+                raise ValueError
             x_t = torch.clamp(x_t, -1.0, 1.0)
 
             if i % step_size == 0:
@@ -135,7 +153,7 @@ class DiffusionSampler:
             
 
     @torch.no_grad()
-    def grid_plot(self, x_t, y, model, save_path):
+    def grid_plot(self, x_t, y, model, save_path, x_condition=None):
         num_plot = 10
         T = len(self.betas)
         stepsize = int(T / num_plot)
@@ -143,7 +161,12 @@ class DiffusionSampler:
         fig, axes = plt.subplots(2, 5, figsize=(15, 6))
         for i in range(0, T)[::-1]:
             t_tensor = torch.full((1, ), i, dtype=torch.long)
-            x_t = self.reverse_sample(x_t, y, t_tensor, model)
+            if self.mode == 'conditional':
+                x_t = self.reverse_sample(x_t, t_tensor, model, x_condition)
+            elif self.mode == 'unconditional':
+                x_t = self.reverse_sample(x_t, t_tensor, model)
+            else:
+                raise ValueError
             x_t = torch.clamp(x_t, -1.0, 1.0)
 
             if i % stepsize == 0:
@@ -159,15 +182,15 @@ class DiffusionSampler:
     
 
     @torch.no_grad()
-    def get_conditonal_diffusion_result(self, x_t, y, model):
+    def get_conditonal_diffusion_result(self, x_t, x_condition, model):
         T = len(self.betas)
-        x_0 = self.reverse_iterate(x_t, y, T-1, model)
+        x_0 = self.reverse_iterate(x_t, T-1, model, x_condition)
         x_0 = np.array(utils.tensor2pil(x_0.detach().cpu()))
         
-        y = y.detach().numpy()
-        y = np.uint8(utils.ImageRescale(y, [0, 255]))
+        x_condition = x_condition.detach().numpy()
+        x_condition = np.uint8(utils.ImageRescale(x_condition, [0, 255]))
 
-        img = np.hstack((x_0[:, :, 0], y[0, 0, :, :]))
+        img = np.hstack((x_0[:, :, 0], x_condition[0, 0, :, :]))
         return img
         
 
@@ -337,6 +360,96 @@ class DiffusionModel(nn.Module):
         z = self.encoder(x, t)
         output = self.decoder(z, y, t)
         return output
+
+
+class condition_Unet(nn.Module):
+
+    def __init__(self,):
+        super().__init__()
+        image_channels = 1
+        down_channels = (16, 32, 64, 128, 256)
+        up_channels = (256, 128, 64, 32, 16)
+        out_dim = 1
+        time_emb_dim = 32
+
+        # Time embedding
+        self.time_mlp = nn.Sequential(
+                SinusoidalPositionEmbedding(time_emb_dim),
+                nn.Linear(time_emb_dim, time_emb_dim),
+                nn.ReLU()
+            )
+        self.silu = nn.SiLU()
+        
+        # initial projection
+        self.initial = nn.Conv2d(image_channels, down_channels[0], kernel_size=3, padding=1)
+
+        # Downwards sequential
+        self.encoder_resblk = nn.ModuleList()
+        self.encoder_t_linear = nn.ModuleList()
+        self.encoder_down_sample = nn.ModuleList()
+
+        for i in range(len(down_channels)-1):
+            self.encoder_resblk.append(modules.residual_block(down_channels[i], down_channels[i+1]))
+            self.encoder_t_linear.append(nn.Linear(time_emb_dim, down_channels[i+1]))
+            self.encoder_down_sample.append(modules.DownSample(down_channels[i+1], down_channels[i+1]))
+        
+        # Upwards sequential
+        self.decoder_spadeblk = nn.ModuleList()
+        self.decoder_t_linear = nn.ModuleList()
+        self.decoder_up_sample = nn.ModuleList()
+
+        for i in range(len(up_channels)-1):
+            self.decoder_spadeblk.append(modules.SPADE_residual_block(1, 2*up_channels[i], up_channels[i+1]))
+            self.decoder_t_linear.append(nn.Linear(time_emb_dim, up_channels[i+1]))
+            self.decoder_up_sample.append(modules.UpSample(up_channels[i], up_channels[i]))
+
+        # final projection to output
+        self.final = nn.Conv2d(up_channels[-1], out_dim, 1)
+
+    
+    def forward(self, x_t, x_condition, t):
+        # time embedding
+        t_embed = self.time_mlp(t)
+        # initial projection 
+        x = self.initial(x_t)
+        
+        # U-Net encoder
+        features = []
+        for i in range(len(self.encoder_resblk)):
+            # residual block
+            x = self.encoder_resblk[i](x)
+            
+            # add time embedding
+            time_emb = self.silu(self.encoder_t_linear[i](t_embed))
+            time_emb = time_emb[(..., ) + (None, ) * 2]
+            x = x + time_emb
+            
+            features.append(x)
+
+            # downsample
+            x = self.encoder_down_sample[i](x)
+        
+
+        # U-Net decoder
+        for i in range(len(self.decoder_spadeblk)):
+            # upsample
+            x = self.decoder_up_sample[i](x)
+
+            # skip connection
+            residual_x = features.pop()
+            x = torch.cat((x, residual_x), dim=1)
+
+            # SPADE block
+            x = self.decoder_spadeblk[i](x, x_condition)
+            
+            # add time embedding
+            time_emb = self.silu(self.decoder_t_linear[i](t_embed))
+            time_emb = time_emb[(..., ) + (None, ) * 2]
+            x = x + time_emb
+
+        output = self.final(x)
+        return output
+
 
 
 if __name__ == "__main__":
