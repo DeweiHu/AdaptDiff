@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torch.optim.lr_scheduler import StepLR
 import pickle
 import numpy as np
+import random
 from tqdm import tqdm
 
 import utils
@@ -22,7 +23,11 @@ with open(data_path + "OCTA_data.pickle", "rb") as handle:
     data = pickle.load(handle)
 
 datasets = ["octa500", "rose"]
-num_sample = 100
+# datasets = ["drive", "stare", "chase",
+#             "hrf_control", "hrf_diabetic", "hrf_glaucoma",
+#             "aria_control", "aria_diabetic", "aria_amd",]
+
+num_sample = 80
 batch_size = 8
 p_size = [256, 256]
 intensity_range = [-1, 1]
@@ -75,9 +80,14 @@ for epoch in range(n_epoch):
             optimizer.zero_grad()
 
             # forward sample
-            x_0 = x[:,0,:,:].unsqueeze(1)
+            x_0 = x[:,1,:,:].unsqueeze(1)
             t = torch.randint(0, T, (x_0.shape[0],)).long()
             x_t, eps = sampler.forward_sample(x_0, t)
+
+            # classifier-free guidance
+            seed = random.uniform(0, 1)
+            if seed >= 0.7:
+                y = torch.zeros_like(y)
 
             # model prediction
             eps_pred = model(x_t.to(device), y.to(device), t.to(device))
@@ -89,17 +99,17 @@ for epoch in range(n_epoch):
             pbar.update(1)
             pbar.set_description("epoch: %d, L1_loss: %.4f" %(epoch, loss.item()))
 
-            if step % 1000 == 0:
-                x_t = torch.randn((1, 1, 256, 256))
-                x_condition = y[0].unsqueeze(0)
-                img = sampler.get_conditonal_diffusion_result(x_t, x_condition, model)
-                
-                save_name = f"epoch_{epoch}_step_{step}"
-                utils.image_saver(img, save_path, save_name)
+        # plot results
+        x_t = torch.randn((1, 1, 256, 256))
+        x_condition = y[0].unsqueeze(0)
+        img = sampler.get_conditonal_diffusion_result(x_t, x_condition, model)
+        
+        save_name = f"epoch_{epoch}"
+        utils.image_saver(img, save_path, save_name)
 
         scheduler.step()
     
-    name = "conditional_diffusion_octa.pt"
+    name = "conditional_diffusion_octa_(clf).pt"
     torch.save(model.state_dict(), ckpt_path + name)
 
 
