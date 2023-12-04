@@ -62,6 +62,8 @@ class DiffusionSampler:
         self.sqrt_reciprocal_alphas = torch.sqrt(1.0 / self.alphas)
 
         self.alphas_cumprod = torch.cumprod(self.alphas, axis=0)
+        self.sqrt_reciprocal_alphas_cumprod = torch.sqrt(1.0 / self.alphas_cumprod)
+
         self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
         self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1. - self.alphas_cumprod)
         
@@ -84,6 +86,7 @@ class DiffusionSampler:
         return x_t, eps
 
 
+    # compute x_{t-1} from x_t
     @torch.no_grad()
     def reverse_sample(self, x_t, t, model, x_condition=None):
         
@@ -114,6 +117,7 @@ class DiffusionSampler:
         return mean + torch.sqrt(posterior_variance_t) * noise
 
 
+    # compute x_0 iteratively from x_t
     @torch.no_grad()
     def reverse_iterate(self, x_t, t, model, x_condition=None):
         # iterative reverse sampling
@@ -132,6 +136,31 @@ class DiffusionSampler:
         return x_t
     
 
+    # compute x_0 directly from x_t
+    @torch.no_grad()
+    def reverse_skip(self, x_t, t, model, x_condition=None):
+
+        sqrt_one_minus_alphas_cumprod_t = self.get_index_from_list(
+            self.sqrt_one_minus_alphas_cumprod, t, x_t.shape
+        )
+        
+        sqrt_reciprocal_alphas_cumprod_t = self.get_index_from_list(
+            self.sqrt_reciprocal_alphas_cumprod, t, x_t.shape
+        )
+        
+        if self.mode == 'conditional':
+            eps_pred = model(x_t.to(self.device), x_condition.to(self.device), t.to(self.device)).cpu()
+        elif self.mode == 'unconditional':
+            eps_pred = model(x_t.to(self.device), t.to(self.device)).cpu()
+        else:
+            raise ValueError
+        
+        x_0_t = sqrt_reciprocal_alphas_cumprod_t * (x_t - sqrt_one_minus_alphas_cumprod_t * eps_pred)
+
+        return x_0_t
+
+
+    # compute all x_i from x_t i={t-1, ..., 0}
     @torch.no_grad()
     def serial_reverse_iterate(self, x_t, T, model, num_images, save_path, x_condition=None):
         
@@ -153,28 +182,38 @@ class DiffusionSampler:
             
 
     @torch.no_grad()
-    def grid_plot(self, x_t, y, model, save_path, x_condition=None):
-        num_plot = 10
+    def grid_plot(self, x_t, model, save_path, x_condition=None):
+        num_plot = 5
         T = len(self.betas)
         stepsize = int(T / num_plot)
 
-        fig, axes = plt.subplots(2, 5, figsize=(15, 6))
+        fig, axes = plt.subplots(1, 5, figsize=(16, 6))
         for i in range(0, T)[::-1]:
             t_tensor = torch.full((1, ), i, dtype=torch.long)
+            
             if self.mode == 'conditional':
                 x_t = self.reverse_sample(x_t, t_tensor, model, x_condition)
+                x_0_t = self.reverse_skip(x_t, t_tensor, model, x_condition)
             elif self.mode == 'unconditional':
                 x_t = self.reverse_sample(x_t, t_tensor, model)
+                x_0_t = self.reverse_skip(x_t, t_tensor, model)
             else:
                 raise ValueError
+            
             x_t = torch.clamp(x_t, -1.0, 1.0)
+            x_0_t = torch.clamp(x_0_t, -1.0, 1.0)
 
             if i % stepsize == 0:
+                im_x_t = np.array(utils.tensor2pil(x_t.detach().cpu()))
+                im_x_0_t = np.array(utils.tensor2pil(x_0_t.detach().cpu()))
+                img = np.concatenate((im_x_t, im_x_0_t), axis=0)
+
                 r = int(i / stepsize) // 5
                 c = int(i / stepsize) % 5
-                ax = axes[r, c]
-                ax.imshow(utils.tensor2pil(x_t.detach().cpu()))
-                ax.set_title(f"denoise step = {i}")
+                # ax = axes[r, c]
+                ax = axes[c]
+                ax.imshow(img, cmap="gray")
+                ax.set_title(f"denoise step = {T-i}")
                 ax.axis("off")
         
         plt.tight_layout()
