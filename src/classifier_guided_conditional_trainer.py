@@ -25,8 +25,8 @@ with open(data_path + "OCTA_data.pickle", "rb") as handle:
     data = pickle.load(handle)
 
 datasets = ["octa500"]
-num_sample = 50
-batch_size = 16
+num_sample = 1
+batch_size = 10
 p_size = [256, 256]
 intensity_range = [-1, 1]
 
@@ -54,47 +54,47 @@ sampler = diffusion_solver.DiffusionSampler(betas, device=device)
 
 # -------------------load segmentation model ------------------------------
 seg_model = arch.res_Unet().to(device)
+initial_state = {name: param.clone() for name, param in seg_model.named_parameters()}
 
 # training configuration
-n_epoch = 50
+n_epoch = 1
 DSC_loss = losses.DiceBCELoss()
 CE_loss = nn.CrossEntropyLoss()
 
-lr = 1e-3
+lr = 1e-4
 optimizer = torch.optim.Adam(seg_model.parameters(), lr=lr)
 scheduler = StepLR(optimizer, step_size=5, gamma=0.5)
 
 
 # -------------------------- training ------------------------------
 softmax = nn.Softmax2d()
-strength = 1e-3
+strength = 1
 
 for epoch in range(n_epoch):
+    for step, (x, y) in enumerate(train_data):
+        
+        seg_model.train()
+        
+        x_t = torch.randn((batch_size, 1, 256, 256))
+        y = y.squeeze(1).to(torch.long).to(device)
+        
+        # unconditional diffusion
+        x_0_uncondition = sampler.reverse_iterate(x_t, T-1, dpm_model)
+        x_0_uncondition = torch.clamp(x_0_uncondition, -1.0, 1.0)
 
-    values = range(len(train_data))
-    with tqdm(total=len(values)) as pbar:
-
-        for step, (x, y) in enumerate(train_data):
-            
-            seg_model.train()
-            optimizer.zero_grad()
-            
-            x_t = torch.randn((batch_size, 1, 256, 256))
-            y = y.squeeze(1).to(torch.long).to(device)
-            
-            # unconditional diffusion
-            x_0_uncondition = sampler.reverse_iterate(x_t, T-1, dpm_model)
-            x_0_uncondition = torch.clamp(x_0_uncondition, -1.0, 1.0)
-
-            # classifier-guided conditional diffusion
-            total_loss = []
+        # classifier-guided conditional diffusion
+        values = range(T)
+        with tqdm(total=len(values)) as pbar:
+        
             for j in range(0, T)[::-1]:
+                optimizer.zero_grad()
+
                 t_tensor = torch.full((1, ), j, dtype=torch.long)
                 
                 # compute x_{0|t} for each timestep t
                 x_0_t = sampler.reverse_skip(x_t, t_tensor, dpm_model)
                 x_0_t = torch.clamp(x_0_t, 0.0, 1.0).to(device)
-                x_0_t.requires_grad_()
+                x_0_t.requires_grad_(True)
 
                 # conduct segmentation 
                 pred_raw = seg_model(x_0_t)
@@ -104,40 +104,46 @@ for epoch in range(n_epoch):
                 loss = CE_loss(pred_raw, y) + DSC_loss(pred_y, y)
                 loss.backward()
                 optimizer.step()
-                total_loss.append(loss.item())
 
                 # compute gradient with regard to x_{0|t}. 
                 # Do the forward process again
-                pred_raw = pred_raw.detach()
-                pred_y = pred_y.detach()
+                # pred_raw = pred_raw.detach()
+                # pred_y = pred_y.detach()
 
-                pred_raw = seg_model(x_0_t)
-                pred_y = torch.argmax(softmax(pred_raw), dim=1)
-                loss = CE_loss(pred_raw, y) + DSC_loss(pred_y, y)
-                loss.backward()
-                gradient = x_0_t.grad
+                # pred_raw = seg_model(x_0_t)
+                # pred_y = torch.argmax(softmax(pred_raw), dim=1)
+                # loss = CE_loss(pred_raw, y) + DSC_loss(pred_y, y)
+                # loss.backward()
+                gradient = torch.autograd.grad(loss, x_0_t)[0]
 
                 # update x_t with x_{t-1}
                 x_t = sampler.reverse_sample(x_t, t_tensor, dpm_model)
                 x_t = x_t + strength * gradient.cpu()
 
+                pbar.update(1)
+                pbar.set_description("step: %d, loss: %.4f, grad: %.4f" \
+                                     %(step, loss.item(), torch.norm(gradient).item()))
+
+                # update checker
+                for name, param in seg_model.named_parameters():
+                    assert not torch.allclose(param, initial_state[name]), f"Parameter {name} was not updated!"
+
+            # final output of conditional diffusion
             x_0_condition = torch.clamp(x_t, -1.0, 1.0)
             im_y = y[0].detach().cpu().numpy()
-            # im_pred = pred_y[0].detach().cpu().numpy()
+            im_pred_y = pred_y[0].detach().cpu().numpy()
 
-            pbar.update(1)
-            pbar.set_description("epoch: %d, total_loss: %.4f" %(epoch, sum(total_loss)))
+            # make a plot
+            im_uncondition = np.array(utils.tensor2pil(x_0_uncondition))[:,:,0]
+            im_condition = np.array(utils.tensor2pil(x_0_condition))[:,:,0]
+            im_y = np.uint8(utils.ImageRescale(im_y, [0, 255]))
+            im_pred_y = np.uint8(utils.ImageRescale(im_pred_y, [0, 255]))
 
-        # make a plot
-        im_uncondition = np.array(utils.tensor2pil(x_0_uncondition))[:,:,0]
-        im_condition = np.array(utils.tensor2pil(x_0_condition))[:,:,0]
-        im_y = np.uint8(utils.ImageRescale(im_y, [0, 255]))
+            im_plot = np.concatenate((im_uncondition, im_condition, im_pred_y, im_y), axis=1)
+            name = f"st{step}"
+            utils.image_saver(im_plot, save_path, name)
 
-        im_plot = np.concatenate((im_uncondition, im_condition, im_y), axis=1)
-        name = f"epoch_{epoch}"
-        utils.image_saver(im_plot, save_path, name)
-
-    scheduler.step()
+        scheduler.step()
 
     name = "pretrained_seg_octa500.pt"
     torch.save(seg_model.state_dict(), ckpt_path + name)
