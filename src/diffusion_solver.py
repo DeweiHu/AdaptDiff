@@ -72,6 +72,12 @@ class DiffusionSampler:
 
         self.posterior_variance = betas * (1. - self.alphas_cumprod_prev) / (1. - self.alphas_cumprod)
         
+        # variables for the type II mean expression
+        self.reciprocal_one_minus_alphas_cumprod = 1.0 / (1. - self.alphas_cumprod)
+        self.sqrt_alphas_cumprod_prev = torch.sqrt(self.alphas_cumprod_prev)
+        self.sqrt_alpha = torch.sqrt(self.alphas)
+
+
 
     # set the forward sample done on cpu by default
     def forward_sample(self, x_0, t):
@@ -88,7 +94,7 @@ class DiffusionSampler:
 
     # compute x_{t-1} from x_t
     @torch.no_grad()
-    def reverse_sample(self, x_t, t, model, x_condition=None):
+    def reverse_sample(self, x_t, t, model, x_condition=None, output_type='image'):
         
         betas_t = self.get_index_from_list(self.betas, t, x_t.shape)
         
@@ -112,10 +118,60 @@ class DiffusionSampler:
             raise ValueError
 
         mean = sqrt_reciprocal_alphas_t * (x_t - betas_t * eps_pred / sqrt_one_minus_alphas_cumprod_t)
+        std = torch.sqrt(posterior_variance_t)
         noise = torch.randn_like(x_t)
 
-        return mean + torch.sqrt(posterior_variance_t) * noise
+        output = mean + std * noise
 
+        if output_type == 'image':
+            return output
+        elif output_type == 'gaussian':
+            return mean, std, noise
+        else:
+            raise ValueError
+
+
+    @torch.no_grad()
+    def reverse_sample_typeII(self, x_t, t, model, output_type='image'):
+        
+        betas_t = self.get_index_from_list(self.betas, t, x_t.shape)
+        
+        reciprocal_one_minus_alphas_cumprod_t = self.get_index_from_list(
+            self.reciprocal_one_minus_alphas_cumprod, t, x_t.shape
+        )
+
+        sqrt_alphas_cumprod_prev_t = self.get_index_from_list(
+            self.sqrt_alphas_cumprod_prev, t, x_t.shape
+        )
+
+        sqrt_alpha_t = self.get_index_from_list(
+            self.sqrt_alpha, t, x_t.shape
+        )
+
+        alphas_cumprod_prev_t = self.get_index_from_list(
+            self.alphas_cumprod_prev, t, x_t.shape
+        )
+        
+        posterior_variance_t = self.get_index_from_list(
+            self.posterior_variance, t, x_t.shape
+        )
+
+        coefficient_1 = reciprocal_one_minus_alphas_cumprod_t * sqrt_alphas_cumprod_prev_t * betas_t
+        coefficient_2 = reciprocal_one_minus_alphas_cumprod_t * sqrt_alpha_t * (1. - alphas_cumprod_prev_t)
+        x_0_t = self.reverse_skip(x_t, t, model)
+
+        mean = coefficient_1 * x_0_t + coefficient_2 * x_t
+        std = torch.sqrt(posterior_variance_t)
+        noise = torch.randn_like(x_t)
+
+        output = mean + std * noise
+
+        if output_type == 'image':
+            return output
+        elif output_type == 'gaussian':
+            return mean, std, noise
+        else:
+            raise ValueError
 
     # compute x_0 iteratively from x_t
     @torch.no_grad()
@@ -134,6 +190,7 @@ class DiffusionSampler:
             x_t = torch.clamp(x_t, -1.0, 1.0)
 
         return x_t
+    
     
 
     # compute x_0 directly from x_t
