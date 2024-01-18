@@ -13,7 +13,6 @@ import diffusion_solver
 import model_architecture as arch
 import losses
 
-
 # ----------------------------load data ------------------------------
 device = torch.device("cuda")
 
@@ -25,7 +24,7 @@ with open(data_path + "OCTA_data.pickle", "rb") as handle:
     data = pickle.load(handle)
 
 datasets = ["octa500"]
-num_sample = 1
+num_sample = 10
 batch_size = 10
 p_size = [256, 256]
 intensity_range = [-1, 1]
@@ -54,10 +53,12 @@ sampler = diffusion_solver.DiffusionSampler(betas, device=device)
 
 # -------------------load segmentation model ------------------------------
 seg_model = arch.res_Unet().to(device)
+seg_model.load_state_dict(torch.load(ckpt_path + "segmentor_octa500.pt"))
 initial_state = {name: param.clone() for name, param in seg_model.named_parameters()}
 
+
 # training configuration
-n_epoch = 1
+n_epoch = 10
 DSC_loss = losses.DiceBCELoss()
 CE_loss = nn.CrossEntropyLoss()
 
@@ -68,7 +69,7 @@ scheduler = StepLR(optimizer, step_size=5, gamma=0.5)
 
 # -------------------------- training ------------------------------
 softmax = nn.Softmax2d()
-strength = 1
+strength = 850
 
 for epoch in range(n_epoch):
     for step, (x, y) in enumerate(train_data):
@@ -94,31 +95,32 @@ for epoch in range(n_epoch):
                 # compute x_{0|t} for each timestep t
                 x_0_t = sampler.reverse_skip(x_t, t_tensor, dpm_model)
                 x_0_t = torch.clamp(x_0_t, 0.0, 1.0).to(device)
-                x_0_t.requires_grad_(True)
 
                 # conduct segmentation 
-                pred_raw = seg_model(x_0_t)
-                pred_y = torch.argmax(softmax(pred_raw), dim=1)
+                pred = seg_model(x_0_t)
+                pred_y = torch.argmax(softmax(pred), dim=1)
 
                 # update the segmentation network parameters
-                loss = CE_loss(pred_raw, y) + DSC_loss(pred_y, y)
+                loss = CE_loss(pred, y) + DSC_loss(pred_y, y)
                 loss.backward()
                 optimizer.step()
 
                 # compute gradient with regard to x_{0|t}. 
                 # Do the forward process again
-                # pred_raw = pred_raw.detach()
-                # pred_y = pred_y.detach()
+                x_in = x_0_t.clone().detach().requires_grad_(True)
 
-                # pred_raw = seg_model(x_0_t)
-                # pred_y = torch.argmax(softmax(pred_raw), dim=1)
-                # loss = CE_loss(pred_raw, y) + DSC_loss(pred_y, y)
-                # loss.backward()
-                gradient = torch.autograd.grad(loss, x_0_t)[0]
+                pred = seg_model(x_in)
+                pred_y = torch.argmax(softmax(pred), dim=1)
+                loss = CE_loss(pred, y) + DSC_loss(pred_y, y)
+                gradient = torch.autograd.grad(- strength * loss, x_in)[0]
 
                 # update x_t with x_{t-1}
-                x_t = sampler.reverse_sample(x_t, t_tensor, dpm_model)
-                x_t = x_t + strength * gradient.cpu()
+                mean, std, epsilon = sampler.reverse_sample_typeII(x_t, 
+                                                                   t_tensor, 
+                                                                   dpm_model, 
+                                                                   output_type='gaussian')
+                mean_shift = mean + gradient.cpu()
+                x_t = mean_shift + std * epsilon
 
                 pbar.update(1)
                 pbar.set_description("step: %d, loss: %.4f, grad: %.4f" \
@@ -143,7 +145,7 @@ for epoch in range(n_epoch):
             name = f"st{step}"
             utils.image_saver(im_plot, save_path, name)
 
-        scheduler.step()
+        # scheduler.step()
 
     name = "pretrained_seg_octa500.pt"
     torch.save(seg_model.state_dict(), ckpt_path + name)
