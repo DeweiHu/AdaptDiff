@@ -1,30 +1,39 @@
 import torch
-from torch import nn
+import random
 import pickle
 import numpy as np
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 import utils
-from BinaryMaskSampler import load_binary_masks
+import dataloader
 import diffusion_solver
-
 
 
 # ------------------------------ load data ------------------------------
 device = torch.device("cuda")
 
 data_path = "/home/dewei/Medical_Semantic_Diffusion/data/"
-save_path = "/home/dewei/Medical_Semantic_Diffusion/result/"
+save_path = "/home/dewei/Medical_Semantic_Diffusion/result/result_diffusion/"
 ckpt_path = "/home/dewei/Medical_Semantic_Diffusion/ckpt/"
 
 with open(data_path + "FP_data.pickle", "rb") as handle:
-    data = pickle.load(handle)
+    fp_data = pickle.load(handle)
 
-mask_loader = load_binary_masks(data=data, 
-                                num_sample=1, 
-                                batch_size=1)
+mask_loader = dataloader.load_binary_masks(data=fp_data, 
+                                           num_sample=30, 
+                                           batch_size=1)
 
-del data
+del fp_data
+
+with open(data_path + "OCTA_data.pickle", "rb") as handle:
+    octa_data = pickle.load(handle)
+
+target = "octa500"
+
+template = dataloader.GetHistogramTemplate(im_list=octa_data[target+"_im"],
+                                           num_sample=10,
+                                           intensity_range=[0, 1])
 
 # diffusion configuration
 beta_start = 0.0001
@@ -45,23 +54,37 @@ model.load_state_dict(torch.load(ckpt_path + "semicond_diffusion(octa500).pt"))
 
 # ------------------------------ test model ------------------------------
 
+synthesized_pair = []
+
 values = range(len(mask_loader))
 with tqdm(total=len(values)) as pbar:
 
     for step, mask in enumerate(mask_loader):
 
+        # get a histogram template
+        idx = random.randint(0, template.len)
+        im_template = template.im[idx]
+
         x_t = torch.randn((1, 1, 256, 256))
-        mask = mask[0].unsqueeze(0)
-        
         x_0 = sampler.reverse_iterate(x_t, T-1, model, mask)
-        img = np.array(utils.tensor2pil(x_0.detach().cpu()))
-        img = img[:, :, 0]
 
-        mask = utils.ImageRescale(mask.detach().numpy(), [0, 255])
-        mask = np.uint8(mask[0, 0, :, :])
+        im = utils.tensor2numpy(x_0[0].detach().cpu())
+        im = utils.hist_match(im, im_template[0])
 
-        save_name = f"{step}"
-        utils.image_saver(img, save_path + "syn_octa500", save_name)
-        utils.image_saver(mask, save_path + "binary_mask", save_name)
+        mask = utils.tensor2numpy(mask[0].detach().cpu())
 
+        synthesized_pair.append((im, mask))
+
+        if step % 100 == 0:
+
+            im = utils.ImageRescale(im, [0, 255])
+            mask = utils.ImageRescale(mask, [0, 255])
+
+            utils.image_saver(img=np.hstack((im, mask)), 
+                              path=save_path, 
+                              name=f"im_{step // 100}")
+        
         pbar.update(1)
+
+with open(data_path + f"{target}_syn.pickle", "wb") as handle:
+    pickle.dump(synthesized_pair, handle)
