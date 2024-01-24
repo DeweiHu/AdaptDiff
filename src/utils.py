@@ -17,7 +17,8 @@ def print_gpu_utilization(stemp, visible_devices):
 
 
 def image_saver(img, path, name):
-    img = Image.fromarray(img.astype(np.uint8))
+    img = ImageRescale(img, [0, 255]).astype(np.uint8)
+    img = Image.fromarray(img)
     img.save(os.path.join(path, "{}.png".format(name)))
 
 
@@ -36,39 +37,6 @@ def multi_threshold(img, num_level):
     alpha = np.digitize(img, bins=thresholds)
     return thresholds, alpha
 
-
-def write_depth(path, depth, bits=1, absolute_depth=False):
-
-    if absolute_depth:
-        out = depth
-    else:
-        depth_min = depth.min()
-        depth_max = depth.max()
-
-        max_val = (2 ** (8 * bits)) - 1
-
-        if depth_max - depth_min > np.finfo("float").eps:
-            out = max_val * (depth - depth_min) / (depth_max - depth_min)
-        else:
-            out = np.zeros(depth.shape, dtype=depth.dtype)
-
-    if bits == 1:
-        cv2.imwrite(path + ".png", out.astype("uint8"), [cv2.IMWRITE_PNG_COMPRESSION, 0])
-    elif bits == 2:
-        cv2.imwrite(path + ".png", out.astype("uint16"), [cv2.IMWRITE_PNG_COMPRESSION, 0])
-
-    return
-
-def _to_image_(tensor):
-    if len(tensor.shape) == 3:
-        img = tensor.detach().cpu().permute(1, 2, 0).numpy()
-    elif len(tensor.shape) == 2:
-        img = tensor.detach().cpu().numpy()
-    else:
-        raise ValueError
-
-    img = (ImageRescale(img, [0,255])).astype('uint8')
-    return img
 
 def ImageRescale(im, I_range):
     im_range = im.max() - im.min()
@@ -123,6 +91,18 @@ def tensor2pil(image):
             image = torch.cat((image, image, image), dim=0)
         
     return reverse_transforms(image)
+
+def tensor2numpy(image):
+    '''
+    image: tensor with shape [c, h, w], clamped to [-1.0, 1.0]
+    '''
+    reverse_transforms = transforms.Compose([
+        transforms.Lambda(lambda t: (t + 1) / 2),
+        transforms.Lambda(lambda t: t[0, :, :]), 
+        transforms.Lambda(lambda t: t.numpy().astype(np.float32)),
+    ])
+    return reverse_transforms(image)
+
 
 
 def hist_match(source, template):
