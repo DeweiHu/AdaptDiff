@@ -1,4 +1,4 @@
-# AdaptDiff: Cross-Modality Domain Adaptation via Weak Conditional Semantic Diffusion for Retinal Vessel Segmentation [SASHIMI 2024 Oral]
+# AdaptDiff: Cross-Modality Domain Adaptation via Weak Conditional Semantic Diffusion for Retinal Vessel Segmentation
 
 ### Method
 
