@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
-import torchvision
 import torch.nn.functional as F
+
 
 
 '''
@@ -19,10 +19,10 @@ class SPADE(nn.Module):
 
         self.instance_norm = nn.InstanceNorm2d(output_nch, affine=False)
 
-        self.embed_nch = 32
+        self.embed_nch = 128
         self.embedding = nn.Sequential(
             nn.Conv2d(seg_nch, self.embed_nch, kernel_size=3, padding=1),
-            nn.GELU(),
+            nn.ReLU(),
         )
         self.gamma = nn.Conv2d(self.embed_nch, output_nch, kernel_size=3, padding=1)
         self.beta = nn.Conv2d(self.embed_nch, output_nch, kernel_size=3, padding=1)
@@ -51,16 +51,16 @@ class SPADE_residual_block(nn.Module):
 
         hidden_nch = min(input_nch, output_nch)
 
-        self.conv_1 = nn.Conv2d(input_nch, hidden_nch, kernel_size=3, padding=1)
+        self.conv_1 = nn.Conv2d(input_nch, hidden_nch, kernel_size=1)
         self.SPADE_norm_1 = SPADE(seg_nch, input_nch)
         
-        self.conv_2 = nn.Conv2d(hidden_nch, output_nch, kernel_size=3, padding=1)
+        self.conv_2 = nn.Conv2d(hidden_nch, output_nch, kernel_size=1)
         self.SPADE_norm_2 = SPADE(seg_nch, hidden_nch)
 
-        self.conv_3 = nn.Conv2d(input_nch, output_nch, kernel_size=3, padding=1)
+        self.conv_3 = nn.Conv2d(input_nch, output_nch, kernel_size=1)
         self.SPADE_norm_3 = SPADE(seg_nch, input_nch)
 
-        self.activate = nn.GELU()
+        self.activate = nn.SiLU()
 
 
     def forward(self, x, segmap):
@@ -78,25 +78,26 @@ class residual_block(nn.Module):
         super(residual_block, self).__init__()
 
         hidden_nch = min(input_nch, output_nch)
-        
-        self.conv_1 = nn.Conv2d(input_nch, hidden_nch, kernel_size=3, padding=1)
-        self.norm_1 = nn.InstanceNorm2d(num_features=input_nch)
-        
-        self.conv_2 = nn.Conv2d(hidden_nch, output_nch, kernel_size=3, padding=1)
-        self.norm_2 = nn.InstanceNorm2d(num_features=hidden_nch)
 
-        self.conv_3 = nn.Conv2d(input_nch, output_nch, kernel_size=3, padding=1)
-        self.norm_3 = nn.InstanceNorm2d(num_features=input_nch)
-
-        self.activate = nn.GELU()
-    
+        self.main_path = nn.Sequential(
+            nn.Conv2d(input_nch, hidden_nch, kernel_size=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(hidden_nch),
+            nn.Conv2d(hidden_nch, output_nch, kernel_size=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(output_nch),
+        )
+        
+        self.side_path = nn.Sequential(
+            nn.Conv2d(input_nch, output_nch, kernel_size=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(output_nch),
+        )
 
     def forward(self, x):
-        main_x = self.conv_1(self.activate(self.norm_1(x)))
-        main_x = self.conv_2(self.activate(self.norm_2(main_x)))
-        side_x = self.conv_3(self.activate(self.norm_3(x)))
+        main_x = self.main_path(x)
+        side_x = self.side_path(x)
         output = main_x + side_x
-
         return output
     
 
@@ -107,8 +108,8 @@ def ConvBlock(input_nch, output_nch):
                       kernel_size=3,
                       stride=1,
                       padding=1),
-            nn.InstanceNorm2d(output_nch),
-            nn.GELU(),
+            nn.BatchNorm2d(output_nch),
+            nn.ReLU(),
     )
 
 def DownSample(input_nch, output_nch):
@@ -118,8 +119,8 @@ def DownSample(input_nch, output_nch):
                       kernel_size=4,
                       stride=2,
                       padding=1),
-            nn.InstanceNorm2d(output_nch),
-            nn.GELU(),
+            nn.BatchNorm2d(output_nch),
+            nn.ReLU(),
     )
             
 
@@ -130,8 +131,8 @@ def UpSample(input_nch, output_nch):
                                kernel_size=4,
                                stride=2,
                                padding=1),
-            nn.InstanceNorm2d(output_nch),
-            nn.GELU(),
+            nn.BatchNorm2d(output_nch),
+            nn.ReLU(),
     )
 
 
@@ -228,6 +229,7 @@ class Semantic_Generator(nn.Module):
 
     def forward(self, x, y):
         mu, logvar = self.style_encoder(x.permute(0, 1, 3, 2))
+        # mu, logvar = self.style_encoder(x)
         z = self.reparameterize(mu, logvar)
         fake_im = self.generator(z, y)
         return fake_im, mu, logvar
@@ -273,75 +275,3 @@ class Discriminator(nn.Module):
     
     def forward(self, x):
         return self.model(x)
-
-
-class VGG19(torch.nn.Module):
-    def __init__(self, requires_grad=False):
-        super().__init__()
-        vgg_pretrained_features = torchvision.models.vgg19(pretrained=True).features
-        self.slice1 = torch.nn.Sequential()
-        self.slice2 = torch.nn.Sequential()
-        self.slice3 = torch.nn.Sequential()
-        self.slice4 = torch.nn.Sequential()
-        self.slice5 = torch.nn.Sequential()
-        for x in range(2):
-            self.slice1.add_module(str(x), vgg_pretrained_features[x])
-        for x in range(2, 7):
-            self.slice2.add_module(str(x), vgg_pretrained_features[x])
-        for x in range(7, 12):
-            self.slice3.add_module(str(x), vgg_pretrained_features[x])
-        for x in range(12, 21):
-            self.slice4.add_module(str(x), vgg_pretrained_features[x])
-        for x in range(21, 30):
-            self.slice5.add_module(str(x), vgg_pretrained_features[x])
-        if not requires_grad:
-            for param in self.parameters():
-                param.requires_grad = False
-
-
-    def forward(self, X):
-        h_relu1 = self.slice1(X)
-        h_relu2 = self.slice2(h_relu1)
-        h_relu3 = self.slice3(h_relu2)
-        h_relu4 = self.slice4(h_relu3)
-        h_relu5 = self.slice5(h_relu4)
-        out = [h_relu1, h_relu2, h_relu3, h_relu4, h_relu5]
-        return out
-
-
-if __name__ == "__main__":
-    
-    device = torch.device("cuda")
-
-    # initiate a model
-    encoder_nchs = [4, 8, 16, 32, 64]
-    encoder = ImageEncoder(input_nch=3, 
-                           hidden_nchs=encoder_nchs,
-                           H=256,
-                           W=256).to(device)
-    
-    generator = SPADE_Generator().to(device)
-    discriminator = Discriminator(4).to(device)
-    
-    # dimension checker
-    x = torch.rand((8, 3, 256, 256), dtype=torch.float32).to(device)
-    y = torch.rand((8, 1, 256, 256), dtype=torch.float32).to(device)
-    mu, logvar = encoder(x)
-
-    # reparameterization
-    std = torch.exp(0.5 * logvar)
-    eps = torch.randn_like(std)
-    z = mu + eps * std
-    z = z.view(z.size(0), 1, 16, 16)
-
-    # SPADE Generator
-    fake = generator(z, y)
-
-    # Patch discriminator
-    fake_concat = torch.cat([fake, y], dim=1)
-    real_concat = torch.cat([x, y], dim=1)
-    fake_and_real = torch.cat([fake_concat, real_concat], dim=0)
-
-    discriminator_output = discriminator(fake_and_real)
-
-    print(f"{discriminator_output.shape}")

@@ -4,7 +4,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
-import modules
 
 import utils
 
@@ -286,8 +285,8 @@ class DiffusionSampler:
         x_condition = x_condition.detach().numpy()
         x_condition = np.uint8(utils.ImageRescale(x_condition, [0, 255]))
 
-        img = np.hstack((x_0[:, :, 0], x_condition[0, 0, :, :]))
-        return img
+        # img = np.hstack((x_0[:, :, 0], x_condition[0, 0, :, :]))
+        return x_0[:, :, 0], x_condition[0, 0, :, :]
         
 
     def get_index_from_list(self, vals, t, x_shape):
@@ -303,112 +302,6 @@ class DiffusionSampler:
         return output
 
 
-class SinusoidalPositionEmbedding(nn.Module):
-
-    def __init__(self, dim):
-        super(SinusoidalPositionEmbedding, self).__init__()
-        self.dim = dim
-    
-
-    def forward(self, time):
-        device = time.device
-        half_dim = self.dim // 2
-        embeddings = math.log(10000) / (half_dim - 1)
-        embeddings = torch.exp(torch.arange(half_dim, 
-                                            dtype=torch.float32, 
-                                            device=device) * -embeddings)
-        embeddings = time.float()[:, None] * embeddings[None, :]
-        embeddings = torch.cat((embeddings.sin(), embeddings.cos()), dim=-1)
-        return embeddings
-
-
-class condition_Unet(nn.Module):
-
-    def __init__(self,):
-        super().__init__()
-        image_channels = 1
-        down_channels = (16, 32, 64, 128, 256)
-        up_channels = (256, 128, 64, 32, 16)
-        out_dim = 1
-        time_emb_dim = 32
-
-        # Time embedding
-        self.time_mlp = nn.Sequential(
-                SinusoidalPositionEmbedding(time_emb_dim),
-                nn.Linear(time_emb_dim, time_emb_dim),
-                nn.ReLU()
-            )
-        self.silu = nn.SiLU()
-        
-        # initial projection
-        self.initial = nn.Conv2d(image_channels, down_channels[0], kernel_size=3, padding=1)
-
-        # Downwards sequential
-        self.encoder_resblk = nn.ModuleList()
-        self.encoder_t_linear = nn.ModuleList()
-        self.encoder_down_sample = nn.ModuleList()
-
-        for i in range(len(down_channels)-1):
-            self.encoder_resblk.append(modules.residual_block(down_channels[i], down_channels[i+1]))
-            self.encoder_t_linear.append(nn.Linear(time_emb_dim, down_channels[i+1]))
-            self.encoder_down_sample.append(modules.DownSample(down_channels[i+1], down_channels[i+1]))
-        
-        # Upwards sequential
-        self.decoder_spadeblk = nn.ModuleList()
-        self.decoder_t_linear = nn.ModuleList()
-        self.decoder_up_sample = nn.ModuleList()
-
-        for i in range(len(up_channels)-1):
-            self.decoder_spadeblk.append(modules.SPADE_residual_block(1, 2*up_channels[i], up_channels[i+1]))
-            self.decoder_t_linear.append(nn.Linear(time_emb_dim, up_channels[i+1]))
-            self.decoder_up_sample.append(modules.UpSample(up_channels[i], up_channels[i]))
-
-        # final projection to output
-        self.final = nn.Conv2d(up_channels[-1], out_dim, 1)
-
-    
-    def forward(self, x_t, x_condition, t):
-        # time embedding
-        t_embed = self.time_mlp(t)
-        # initial projection 
-        x = self.initial(x_t)
-        
-        # U-Net encoder
-        features = []
-        for i in range(len(self.encoder_resblk)):
-            # residual block
-            x = self.encoder_resblk[i](x)
-            
-            # add time embedding
-            time_emb = self.silu(self.encoder_t_linear[i](t_embed))
-            time_emb = time_emb[(..., ) + (None, ) * 2]
-            x = x + time_emb
-            
-            features.append(x)
-
-            # downsample
-            x = self.encoder_down_sample[i](x)
-        
-
-        # U-Net decoder
-        for i in range(len(self.decoder_spadeblk)):
-            # upsample
-            x = self.decoder_up_sample[i](x)
-
-            # skip connection
-            residual_x = features.pop()
-            x = torch.cat((x, residual_x), dim=1)
-
-            # SPADE block
-            x = self.decoder_spadeblk[i](x, x_condition)
-            
-            # add time embedding
-            time_emb = self.silu(self.decoder_t_linear[i](t_embed))
-            time_emb = time_emb[(..., ) + (None, ) * 2]
-            x = x + time_emb
-
-        output = self.final(x)
-        return output
 
 
 

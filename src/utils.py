@@ -146,3 +146,29 @@ def hist_match(source, template):
     interp_t_values = np.interp(s_quantiles, t_quantiles, t_values)
 
     return interp_t_values[bin_idx].reshape(oldshape)
+
+
+def ColorSeg(pred, gt):
+    h, w = pred.shape
+    tn_color = np.array(Image.new('RGB', (w, h), "seashell"))
+    tp_color = np.array(Image.new('RGB', (w, h), "navy"))
+    fp_color = np.array(Image.new('RGB', (w, h), "limegreen"))
+    fn_color = np.array(Image.new('RGB', (w, h), "crimson"))
+    
+    true = np.uint8(pred == gt)
+    tp_mask = true * gt
+    tp_mask = np.repeat(tp_mask[:, :, np.newaxis], 3, axis=2)
+    
+    tn_mask = true * (1-gt)
+    tn_mask = np.repeat(tn_mask[:, :, np.newaxis], 3, axis=2)
+    
+    fp_mask = np.uint8(pred > gt)
+    fp_mask = np.repeat(fp_mask[:, :, np.newaxis], 3, axis=2)
+    
+    fn_mask = np.uint8(pred < gt)
+    fn_mask = np.repeat(fn_mask[:, :, np.newaxis], 3, axis=2)
+    
+    im_color = tp_color * tp_mask + tn_color * tn_mask + \
+               fp_color * fp_mask + fn_color * fn_mask
+    
+    return im_color

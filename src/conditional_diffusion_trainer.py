@@ -4,15 +4,12 @@ import torch.nn.functional as F
 from torch.optim.lr_scheduler import StepLR
 import pickle
 import numpy as np
-import random
 from tqdm import tqdm
+import random
 
 import utils
 from dataloader import load_train_data
 import diffusion_solver
-
-import sys
-sys.path.insert(0, "/media/dewei/New Volume/static representation/src/")
 import models
 
 # ------------------------------ load data ------------------------------
@@ -25,18 +22,16 @@ ckpt_path = "/home/dewei/Medical_Semantic_Diffusion/ckpt/"
 with open(data_path + "OCTA_data.pickle", "rb") as handle:
     data = pickle.load(handle)
 
-datasets = ["octa500"]
-# datasets = ["drive", "stare", "chase",
-#             "hrf_control", "hrf_diabetic", "hrf_glaucoma",
-#             "aria_control", "aria_diabetic", "aria_amd",]
+print(list(data))
 
-num_sample = 80
-batch_size = 8
+datasets = ["octa500_6M"]
+
+num_sample = 50
+batch_size = 4
 p_size = [256, 256]
 intensity_range = [-1, 1]
 
 train_data = load_train_data(data, p_size, num_sample, datasets, intensity_range, batch_size=batch_size)
-
 
 # diffusion configuration
 beta_start = 0.0001
@@ -52,19 +47,18 @@ sampler = diffusion_solver.DiffusionSampler(betas,
                                             mode='conditional')
 
 # ------------------------------ load model ------------------------------
-model_root = "/media/dewei/New Volume/Model/"
-seg_model = models.res_UNet([8,32,32,64,64,16], 1, 2).to(device)
-seg_model.load_state_dict(torch.load(model_root + "rUNet.pt"))
+seg_model = models.res_UNet([8, 32, 32, 64, 64, 16], 1, 2).to(device)
+seg_model.load_state_dict(torch.load(ckpt_path + "rUNet.pt"))
 
 model = diffusion_solver.condition_Unet().to(device)
 
 # training configuration
-n_epoch = 100
+n_epoch = 20
 mse_loss = nn.MSELoss()
 
 lr = 1e-3
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-scheduler = StepLR(optimizer, step_size=5, gamma=0.5)
+scheduler = StepLR(optimizer, step_size=4, gamma=0.5)
 
 softmax = nn.Softmax2d()
 
@@ -85,11 +79,6 @@ for epoch in range(n_epoch):
             pred_y, _ = seg_model(x_0.to(device))
             pred_y = torch.argmax(softmax(pred_y), dim=1).unsqueeze(1).to(torch.float32)
 
-            # classifier-free guidance
-            seed = random.uniform(0, 1)
-            if seed >= 0.7:
-                pred_y = torch.zeros_like(y)
-
             # model prediction
             eps_pred = model(x_t.to(device), pred_y.to(device), t.to(device))
             
@@ -101,16 +90,23 @@ for epoch in range(n_epoch):
             pbar.set_description("epoch: %d, L1_loss: %.4f" %(epoch, loss.item()))
 
         # plot results
-        x_t = torch.randn((1, 1, 256, 256))
+        x_t = torch.randn((1, 1, p_size[0], p_size[1]))
         x_condition = y[0].unsqueeze(0)
-        img = sampler.get_conditonal_diffusion_result(x_t, x_condition, model)
+        img, label = sampler.get_conditonal_diffusion_result(x_t, x_condition, model)
         
+        img = utils.ImageRescale(img, [0, 1])
+        template = utils.ImageRescale(x[0, 0, :, :].numpy(), [0, 1])
+        img_hm = utils.hist_match(img, template)
+
+        img_hm = np.uint8(utils.ImageRescale(img_hm, [0, 255]))
+        label = np.uint8(utils.ImageRescale(label, [0, 255]))
+
         save_name = f"epoch_{epoch}"
-        utils.image_saver(img, save_path, save_name)
+        utils.image_saver(np.hstack((img_hm, label)), save_path, save_name)
 
         scheduler.step()
     
-    name = "semicond_diffusion(octa500).pt"
+    name = f"diffusion({datasets[0]}).pt"
     torch.save(model.state_dict(), ckpt_path + name)
 
 
