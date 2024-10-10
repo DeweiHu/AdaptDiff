@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import utils
 import dataloader
 import diffusion_solver
-
+import models
 
 # ------------------------------ load data ------------------------------
 device = torch.device("cuda")
@@ -45,7 +45,7 @@ sampler = diffusion_solver.DiffusionSampler(betas,
                                             mode='conditional')
 
 # ------------------------------ load model ------------------------------
-model = diffusion_solver.condition_Unet().to(device)
+model = models.condition_Unet().to(device)
 model.load_state_dict(torch.load(ckpt_path + f"{target}.pt"))
 
 # ------------------------------ test model ------------------------------

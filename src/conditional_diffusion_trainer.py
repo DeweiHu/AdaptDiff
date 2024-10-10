@@ -50,7 +50,7 @@ sampler = diffusion_solver.DiffusionSampler(betas,
 seg_model = models.res_UNet([8, 32, 32, 64, 64, 16], 1, 2).to(device)
 seg_model.load_state_dict(torch.load(ckpt_path + "rUNet.pt"))
 
-model = diffusion_solver.condition_Unet().to(device)
+model = models.condition_Unet().to(device)
 
 # training configuration
 n_epoch = 20
