@@ -11,6 +11,10 @@ conda env create -f Diffusion.yaml
 ```
 
 ### Method
+In this work, we propose to generate realistic paired data on unlabeled image modalities (OCT-A and FA) with annotated source domain (fundus photography). The data generation is achieved by conditional semantic diffusion. The two important takeaways are:
+>- The conditional diffusion can be trained with weak supervision. And we found the feasible conditions for the noisy label.
+>- The synthetic paired data can be used to train/finetune segmentation model on the unlabeled target domains.
+
 <p align="center">
   <img src="/assets/workflow.png" alt="drawing" width="650"/>
 </p>
@@ -19,10 +23,11 @@ The workflow include (1) training a segmentation network with the annotated sour
 
 * `diffusion_solver.py`: This is the major code to define the diffusion process (setting variance schedule), conduct forward and reverse process. In the class **_DiffusionSampler_**, we define methods **forward_sample** and **reverse_sample**. The reverse sampling can be either conditional or unconditional. For better visualization, there are some auxiliary methods, e.g., iteratively plot each denoising step (**serial_reverse_iterate**).
 
-* `conditional_diffusion_trainer.py`: This is the training code for the diffusion model in step (2). Note that a pre-trained segmentation model is needed to provide the pseudo-label.     
+* `conditional_diffusion_trainer.py`: This is the training code for the diffusion model in step (2). Note that a pre-trained segmentation model is needed to provide the pseudo-label. In the release, we provide a model checkpoint [diffusion.octa500.pt](https://github.com/DeweiHu/AdaptDiff/releases/tag/octa-500-v1.0) for generating OCT-A images in the same style with the [OCTA-500](https://ieee-dataport.org/open-access/octa-500) dataset.      
 
 * `conditional_diffusion_tester.py`: This is the inference code for the diffusion model in step (3). We save the synthetic paired data in a pickle file.
 
+* `example_inference.py`: **TODO**, provide a simple inference code to show the generation result with a binary mask.
 
 ### Data arrangement
 
