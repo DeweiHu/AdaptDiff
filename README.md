@@ -29,6 +29,14 @@ The workflow include (1) training a segmentation network with the annotated sour
 
 * `example_inference.py`: **TODO**, provide a simple inference code to show the generation result with a binary mask.
 
-### Data arrangement
 
+### Data arrangement
+Our experiment includes several public datasets. For easier access, we use a dictionary to save all the data. Key for image lists are formated as {dataset name}_im and the corresponding ground truth are {dataset name}_gt. 
+
+* `dataloader.py`: This is the code that create the dataloader with the paired data. For training, we randomly crop patches with size [256, 256] on the images. The number of patches on each image in specified with num_sample.
+
+
+### Contact
+If you have any question, feel free to contact me at: <br>
+hudewei1212@gmail.com <br>
 
