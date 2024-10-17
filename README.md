@@ -36,7 +36,19 @@ Our experiment includes several public datasets. For easier access, we use a dic
 * `dataloader.py`: This is the code that create the dataloader with the paired data. For training, we randomly crop patches with size [256, 256] on the images. The number of patches on each image in specified with num_sample.
 
 
-### Contact
+### Citation
+If you find this project useful, please consider giving a star and cite our work:
+```
+  @inproceedings{hu2024adaptdiff,
+  title={AdaptDiff: Cross-Modality Domain Adaptation via Weak Conditional Semantic Diffusion for Retinal Vessel Segmentation},
+  author={Hu, Dewei and Li, Hao and Liu, Han and Wang, Jiacheng and Yao, Xing and Lu, Daiwei and Oguz, Ipek},
+  booktitle={International Workshop on Simulation and Synthesis in Medical Imaging},
+  pages={13--23},
+  year={2024},
+  organization={Springer}
+}
+```
+
 If you have any question, feel free to contact me at: <br>
 hudewei1212@gmail.com <br>
 
