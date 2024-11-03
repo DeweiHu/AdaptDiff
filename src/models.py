@@ -4,7 +4,7 @@ import math
 from torch import nn
 import torch.nn.functional as F
 
-import modules
+import src.modules as modules
 
     
 class Residual_block(nn.Module):

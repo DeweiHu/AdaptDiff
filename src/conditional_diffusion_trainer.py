@@ -7,10 +7,10 @@ import numpy as np
 from tqdm import tqdm
 import random
 
-import utils
-from dataloader import load_train_data
-import diffusion_solver
-import models
+import src.utils as utils
+from src.dataloader import load_train_data
+import src.diffusion_solver as diffusion_solver
+import src.models as models
 
 # ------------------------------ load data ------------------------------
 device = torch.device("cuda")

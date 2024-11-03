@@ -6,7 +6,7 @@ import numpy as np
 import cv2
 import imageio
 import os
-from data_augmentation import get_augment_transforms
+from src.data_augmentation import get_augment_transforms
 
 
 class GetPairedDataset(Data.Dataset):

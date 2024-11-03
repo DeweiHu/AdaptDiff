@@ -5,10 +5,10 @@ import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
-import utils
-import dataloader
-import diffusion_solver
-import models
+import src.utils as utils
+import src.dataloader as dataloader
+import src.diffusion_solver as diffusion_solver
+import src.models as models
 
 # ------------------------------ load data ------------------------------
 device = torch.device("cuda")
@@ -27,9 +27,9 @@ mask_loader = dataloader.load_binary_masks(data=target_data,
 
 target = "rose"
 
-template = dataloader.GetHistogramTemplate(im_list=target_data[target+"_im"],
-                                           num_sample=20,
-                                           intensity_range=[0, 1])
+# template = dataloader.GetHistogramTemplate(im_list=target_data[target+"_im"],
+#                                            num_sample=20,
+#                                            intensity_range=[0, 1])
 
 # diffusion configuration
 beta_start = 0.0001
