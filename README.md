@@ -27,7 +27,28 @@ The workflow include (1) training a segmentation network with the annotated sour
 
 * `conditional_diffusion_tester.py`: This is the inference code for the diffusion model in step (3). We save the synthetic paired data in a pickle file.
 
-* `example_inference.py`: **TODO**, provide a simple inference code to show the generation result with a binary mask.
+* `adapter_inference.py`: This is an example code to inference the model provided. Simply specify the directory to a binary vessel mask, model checkpoint and result save directory as following in the `run_inference.sh`. Note that our model can work with image shape in either (384, 384) or (256, 256).
+```
+#!/bin/bash
+
+MASK_PATH="/home/dewei/Desktop/ConditionalDiffusion"
+CKPT_PATH="/home/dewei/Desktop/ConditionalDiffusion/ckpts"
+SAVE_PATH="/home/dewei/Desktop/ConditionalDiffusion"
+
+MASK_NAME="binary_mask.png"
+CKPT_NAME="diffusion.octa500.pt"
+SAVE_NAME="test_result_2"
+
+python /home/dewei/Desktop/ConditionalDiffusion/adapter_inference.py \
+--mask_path $MASK_PATH --mask_name $MASK_NAME \
+--ckpt_path $CKPT_PATH --ckpt_name $CKPT_NAME \
+--save_path $SAVE_PATH --save_name $SAVE_NAME
+```
+<p align="center">
+  <img src="/assets/original_img.png" width="20%" alt="Image 1">
+  <img src="/assets/binary_mask.png" width="20%" alt="Image 2">
+  <img src="/assets/test_result.png" width="20%" alt="Image 3">
+</p>
 
 
 ### Data arrangement
