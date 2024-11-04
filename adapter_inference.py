@@ -46,9 +46,10 @@ if __name__ == "__main__":
 
     # model inference
     mask = utils.load_binary_mask(args.mask_path, args.mask_name)
+    h, w = mask.shape
     mask = torch.tensor(mask[None, None, :, :]).type(torch.FloatTensor)
 
-    x_t = torch.randn((1, 1, 384, 384))
+    x_t = torch.randn((1, 1, h, w))
     x_0 = sampler.reverse_iterate(x_t, T-1, model, mask)
 
     im = utils.tensor2numpy(x_0[0].detach().cpu())
