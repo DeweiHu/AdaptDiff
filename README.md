@@ -27,7 +27,7 @@ The workflow include (1) training a segmentation network with the annotated sour
 
 * `conditional_diffusion_tester.py`: This is the inference code for the diffusion model in step (3). We save the synthetic paired data in a pickle file.
 
-* `adapter_inference.py`: This is an example code to inference the model provided. Simply specify the directory to a binary vessel mask, model checkpoint and result save directory in `run_inference.sh`. Note that our model can work with image shape in either (384, 384) or (256, 256). You can try the code with the binary_mask.png provided, simply run
+* `adapter_inference.py`: This is an example code to inference the model provided. Simply specify the directory to a binary vessel mask, model checkpoint and result save directory in `run_inference.sh`. Note that our model can work with image shape in either (384, 384) or (256, 256). You can try the code with the binary_mask.png provided, run
 ```
 bash run_inference.sh
 ```
