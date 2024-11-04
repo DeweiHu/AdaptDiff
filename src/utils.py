@@ -9,6 +9,19 @@ import nibabel as nib
 from torchvision import transforms
 
 
+def load_binary_mask(image_path, name):
+    # Load the image
+    image = Image.open(os.path.join(image_path, name)).convert("L")
+    
+    # Convert the image to a NumPy array
+    image_array = np.array(image)
+    
+    # Convert values from 0 and 255 to 0 and 1
+    binary_array = (image_array > 0).astype(np.uint8)
+    
+    return binary_array
+
+
 def print_gpu_utilization(stemp, visible_devices):
     nvmlInit()
     handle = nvmlDeviceGetHandleByIndex(int(visible_devices))
